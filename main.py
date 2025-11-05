@@ -8,6 +8,8 @@ import queue
 import socket
 import shutil
 import datetime
+import ipaddress
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Tuple, List, Dict
@@ -25,6 +27,11 @@ except ImportError:
 from paramiko.ssh_exception import SSHException
 from ProgramFiles import config_params  # reads ProgramFiles/config_files/global_config.ini
 
+# Configure logging (use INFO default; can be raised to DEBUG for more detail)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+
 class ConfigLoader:
     def __init__(self):
         self.limit = int(config_params.Settings["LIMIT"])
@@ -34,6 +41,15 @@ class ConfigLoader:
         self.cdp_template = self.base_dir / "ProgramFiles" / "textfsm" / "cisco_ios_show_cdp_neighbors_detail.textfsm"
         self.ver_template = self.base_dir / "ProgramFiles" / "textfsm" / "cisco_ios_show_version.textfsm"
         self.excel_template = self.base_dir / "ProgramFiles" / "config_files" / "1 - CDP Network Audit _ Template.xlsx"
+
+        # Validate templates and excel template early to fail fast
+        missing = []
+        for p in (self.cdp_template, self.ver_template, self.excel_template):
+            if not p.exists():
+                missing.append(str(p))
+        if missing:
+            raise FileNotFoundError(f"Required files missing: {', '.join(missing)}")
+
 
 class CredentialManager:
     def __init__(self):
@@ -52,13 +68,13 @@ class CredentialManager:
             if user and pwd:
                 return user, pwd
         except Exception:
-            pass
+            logger.debug("Reading credentials from Windows Credential Manager failed.", exc_info=True)
         return None, None
 
     def _write_win_cred(self, target: str, username: str, password: str, persist: int = 2) -> bool:
         try:
             if not sys.platform.startswith("win"):
-                print(f"[creds] Not a Windows platform; cannot store '{target}' in Credential Manager.")
+                logger.warning("Not a Windows platform; cannot store credentials in Credential Manager.")
                 return False
             import win32cred  # type: ignore
             blob = password.encode("utf-16le")
@@ -73,10 +89,10 @@ class CredentialManager:
                 "Attributes": None,
             }
             win32cred.CredWrite(credential, 0)
-            print(f"[creds] Stored/updated credentials in Windows Credential Manager: {target}")
+            logger.info("Stored/updated credentials in Windows Credential Manager: %s", target)
             return True
-        except Exception as e:
-            print(f"[creds] Failed to write credentials for '{target}': {e}")
+        except Exception:
+            logger.exception("Failed to write credentials for '%s'", target)
             return False
 
     def _prompt_yes_no(self, msg: str, default_no: bool = True) -> bool:
@@ -93,9 +109,9 @@ class CredentialManager:
             u, p = self._read_win_cred(cred_target)
             if u and p:
                 if fixed_username and fixed_username.lower() != u.lower():
-                    print(f"[creds] Loaded {display_name} password from CredMan ({cred_target}). Using fixed username '{fixed_username}'.")
+                    logger.info("Loaded %s password from CredMan (%s). Using fixed username '%s'.", display_name, cred_target, fixed_username)
                     return fixed_username, p
-                print(f"[creds] Loaded {display_name} credentials from Windows Credential Manager ({cred_target}).")
+                logger.info("Loaded %s credentials from Windows Credential Manager (%s).", display_name, cred_target)
                 return (fixed_username or u), p
         import getpass
         if fixed_username:
@@ -117,11 +133,11 @@ class CredentialManager:
         return user, pwd
 
     def prompt_for_inputs(self):
-        print("=== CDP Network Audit ===")
+        logger.info("=== CDP Network Audit ===")
         site_name = input("Enter site name (used in Excel filename): ").strip()
         while not site_name:
             site_name = input("Site name cannot be empty. Please enter site name: ").strip()
-        seed_str = input("Enter one or more seed device IPs (comma-separated): ").strip()
+        seed_str = input("Enter one or more seed device IPs or hostnames (comma-separated): ").strip()
         while not seed_str:
             seed_str = input("Seed IPs cannot be empty. Please enter one or more IPs: ").strip()
         seeds = [s.strip() for s in seed_str.split(",") if s.strip()]
@@ -129,7 +145,7 @@ class CredentialManager:
         # Primary credentials
         stored_user, stored_pass = self._read_win_cred(self.primary_target) if sys.platform.startswith("win") else (None, None)
         if stored_user and stored_pass:
-            print(f"[creds] Found stored Primary user: {stored_user} (target: {self.primary_target})")
+            logger.info("Found stored Primary user: %s (target: %s)", stored_user, self.primary_target)
             override = input("Press Enter to accept, or type a different username: ").strip()
             if override:
                 import getpass
@@ -153,7 +169,7 @@ class CredentialManager:
         answer_user = "answer"
         a_user, a_pass = self._read_win_cred(self.answer_target) if sys.platform.startswith("win") else (None, None)
         if a_user and a_pass:
-            print(f"[creds] Loaded Answer password from Credential Manager ({self.answer_target}). Username fixed to 'answer'.")
+            logger.info("Loaded Answer password from Credential Manager (%s). Username fixed to 'answer'.", self.answer_target)
             answer_pass = a_pass
         else:
             _, answer_pass = self.get_secret_with_fallback(
@@ -167,6 +183,7 @@ class CredentialManager:
                 self._write_win_cred(self.answer_target, answer_user, answer_pass)
 
         return site_name, seeds, primary_user, primary_pass, answer_user, answer_pass
+
 
 class ExcelReporter:
     def __init__(self, excel_template):
@@ -199,6 +216,7 @@ class ExcelReporter:
             auth_array.to_excel(writer, index=False, sheet_name="Authentication Errors", header=False, startrow=4)
             conn_array.to_excel(writer, index=False, sheet_name="Connection Errors", header=False, startrow=4)
 
+
 class NetworkDiscoverer:
     def __init__(self, config: ConfigLoader):
         self.config = config
@@ -213,27 +231,87 @@ class NetworkDiscoverer:
         self.data_lock = threading.Lock()
         self.host_queue: "queue.Queue[str]" = queue.Queue()
 
+    def _safe_parse_textfsm(self, template_path: Path, text: str) -> List[Dict]:
+        """
+        Helper to parse text with TextFSM, returning list of dicts.
+        If parsing fails, returns empty list and logs a debug message.
+        """
+        try:
+            with open(template_path, "r", encoding="cp1252") as f:
+                table = textfsm.TextFSM(f)
+                rows = table.ParseText(text or "")
+                return [dict(zip(table.header, row)) for row in rows]
+        except (OSError, textfsm.TextFSMError) as e:
+            logger.debug("TextFSM parse failed for %s: %s", template_path, e, exc_info=True)
+            return []
+        except Exception:
+            logger.exception("Unexpected error while parsing template %s", template_path)
+            return []
+
     def parse_outputs_and_enqueue_neighbors(self, host: str, cdp_output: str, version_output: str):
-        with open(self.config.cdp_template, "r", encoding="cp1252") as f:
-            table = textfsm.TextFSM(f)
-            res = table.ParseText(cdp_output)
-            cdp_list = [dict(zip(table.header, row)) for row in res]
-        with open(self.config.ver_template, "r", encoding="cp1252") as f:
-            table2 = textfsm.TextFSM(f)
-            res2 = table2.ParseText(version_output)
-            ver_list = [dict(zip(table2.header, row)) for row in res2]
-        hostname = ver_list[0].get("HOSTNAME", host) if ver_list else host
+        """
+        Robust parsing + normalization of CDP and version outputs.
+        - Normalizes DESTINATION_HOST to head-only, uppercase.
+        - Adds LOCAL_* fields.
+        - Records hostname/serial/uptime.
+        - Enqueues switch management IPs only once (marks as visited when enqueued).
+        """
+        cdp_list = self._safe_parse_textfsm(self.config.cdp_template, cdp_output)
+        ver_list = self._safe_parse_textfsm(self.config.ver_template, version_output)
+
+        if ver_list:
+            hostname = ver_list[0].get("HOSTNAME", host)
+            serial_numbers = ver_list[0].get("SERIAL", "")
+            uptime = ver_list[0].get("UPTIME", "")
+        else:
+            hostname = host
+            serial_numbers = ""
+            uptime = ""
+
+        # Register hostname (data structures) once
         with self.data_lock:
-            self.hostnames.add(hostname)
-            self.visited_hostnames.add(hostname)
+            if hostname:
+                self.hostnames.add(hostname)
+                self.visited_hostnames.add(hostname)
+
+        # Mark the current IP as visited (we have processed or are processing it)
+        with self.visited_lock:
             self.visited.add(host)
-            for entry in cdp_list:
-                neighbor_hostname = entry.get("DESTINATION_HOST", "")
-                mgmt_ip = entry.get("MANAGEMENT_IP", "")
-                caps = entry.get("CAPABILITIES", "")
-                if "Switch" in caps and "Host" not in caps and mgmt_ip:
-                    if (mgmt_ip not in self.visited) and (neighbor_hostname not in self.visited_hostnames):
-                        self.host_queue.put(mgmt_ip)
+
+        # Process CDP rows and decide enqueues
+        for entry in cdp_list:
+            text = entry.get("DESTINATION_HOST", "")
+            head = text.split(".", 1)[0].upper() if text else ""
+            entry["DESTINATION_HOST"] = head
+            entry["LOCAL_HOST"] = hostname
+            entry["LOCAL_IP"] = host
+            entry["LOCAL_SERIAL"] = serial_numbers
+            entry["LOCAL_UPTIME"] = uptime
+
+            with self.data_lock:
+                self.cdp_neighbour_details.append(entry)
+
+            caps = entry.get("CAPABILITIES", "")
+            mgmt_ip = entry.get("MANAGEMENT_IP", "")
+
+            if "Switch" in caps and "Host" not in caps and mgmt_ip:
+                should_enqueue = False
+                # Ensure only one thread enqueues the same IP
+                with self.visited_lock:
+                    if mgmt_ip not in self.visited:
+                        # mark visited to prevent duplicate enqueues
+                        self.visited.add(mgmt_ip)
+                        should_enqueue = True
+                # Also deduplicate by hostname
+                with self.data_lock:
+                    if head in self.visited_hostnames:
+                        should_enqueue = False
+                    else:
+                        if head:
+                            self.visited_hostnames.add(head)
+                if should_enqueue:
+                    logger.debug("Enqueuing neighbor %s (%s) discovered from %s", head, mgmt_ip, host)
+                    self.host_queue.put(mgmt_ip)
 
     def _paramiko_jump_client(self, jump_host: str, username: str, password: str) -> paramiko.SSHClient:
         client = paramiko.SSHClient()
@@ -258,8 +336,10 @@ class NetworkDiscoverer:
         else:
             j_user, j_pass = primary_user, primary_pass
             d_user, d_pass = answer_user, answer_pass
-        jump = self._paramiko_jump_client(jump_host, j_user, j_pass)
+
+        jump = None
         try:
+            jump = self._paramiko_jump_client(jump_host, j_user, j_pass)
             transport = jump.get_transport()
             dest_addr = (target_ip, 22)
             local_addr = ("127.0.0.1", 0)
@@ -276,18 +356,25 @@ class NetworkDiscoverer:
                 banner_timeout=self.config.timeout,
                 auth_timeout=self.config.timeout,
             )
+            # Keep reference so we can close the jump client later when disconnecting
             conn._jump_client = jump
             return conn
         except Exception:
-            try:
-                jump.close()
-            except Exception:
-                pass
+            # Ensure jump client is closed if we failed after creating it
+            if jump is not None:
+                try:
+                    jump.close()
+                except Exception:
+                    logger.debug("Failed to close jump client after error.", exc_info=True)
             raise
 
     def run_device_commands(self, jump_host: str, host: str,
                            primary_user: str, primary_pass: str,
                            answer_user: str, answer_pass: str):
+        """
+        Try primary creds first, fall back to answer creds on authentication failure.
+        Returns tuple (cdp_output, version_output) on success, or raises.
+        """
         try:
             conn = self._netmiko_via_jump(
                 jump_host=jump_host,
@@ -306,12 +393,16 @@ class NetworkDiscoverer:
                 try:
                     conn.disconnect()
                 except Exception:
-                    pass
+                    logger.debug("Error disconnecting Netmiko connection", exc_info=True)
                 try:
-                    conn._jump_client.close()
+                    if hasattr(conn, "_jump_client") and conn._jump_client:
+                        conn._jump_client.close()
                 except Exception:
-                    pass
+                    logger.debug("Error closing jump client after disconnect", exc_info=True)
         except NetmikoAuthenticationException:
+            logger.debug("Primary authentication failed for %s; attempting fallback user 'answer'", host)
+            # Try with fallback credentials
+            conn = None
             try:
                 conn = self._netmiko_via_jump(
                     jump_host=jump_host,
@@ -330,72 +421,17 @@ class NetworkDiscoverer:
                     try:
                         conn.disconnect()
                     except Exception:
-                        pass
+                        logger.debug("Error disconnecting Netmiko connection (fallback)", exc_info=True)
                     try:
-                        conn._jump_client.close()
+                        if hasattr(conn, "_jump_client") and conn._jump_client:
+                            conn._jump_client.close()
                     except Exception:
-                        pass
-            except NetmikoAuthenticationException as e:
-                raise e
-
-    def parse_outputs_and_enqueue_neighbors(self, host: str, cdp_output: str, version_output: str):
-        with open(self.config.cdp_template, "r", encoding="cp1252") as f:
-            table = textfsm.TextFSM(f)
-            res = table.ParseText(cdp_output)
-            cdp_list = [dict(zip(table.header, row)) for row in res]
-        with open(self.config.ver_template, "r", encoding="cp1252") as f:
-            table2 = textfsm.TextFSM(f)
-            res2 = table2.ParseText(version_output)
-            ver_list = [dict(zip(table2.header, row)) for row in res2]
-        if not ver_list:
-            hostname = host
-            serial_numbers = ""
-            uptime = ""
-        else:
-            hostname = ver_list[0].get("HOSTNAME", host) if ver_list else host
-            with self.data_lock:
-                self.hostnames.add(hostname)
-                self.visited_hostnames.add(hostname)
-                self.visited.add(host)  # Add the current IP to visited
-                for entry in cdp_list:
-                    neighbor_hostname = entry.get("DESTINATION_HOST", "")
-                    mgmt_ip = entry.get("MANAGEMENT_IP", "")
-                    caps = entry.get("CAPABILITIES", "")
-                    # Only enqueue if neither IP nor hostname has been visited
-                    if "Switch" in caps and "Host" not in caps and mgmt_ip:
-                        if (mgmt_ip not in self.visited) and (neighbor_hostname not in self.visited_hostnames):
-                            self.host_queue.put(mgmt_ip)
-
-            with self.data_lock:
-                self.hostnames.add(hostname)
-                self.visited_hostnames.add(hostname)  # <-- Add this line
-                for entry in cdp_list:
-                    neighbor_hostname = entry.get("DESTINATION_HOST", "")
-                    mgmt_ip = entry.get("MANAGEMENT_IP", "")
-                    caps = entry.get("CAPABILITIES", "")
-                    # Only enqueue if not already visited by hostname
-                    if "Switch" in caps and "Host" not in caps and mgmt_ip:
-                        if neighbor_hostname and neighbor_hostname not in self.visited_hostnames:
-                            self.host_queue.put(mgmt_ip)
-            serial_numbers = ver_list[0].get("SERIAL", "")
-            uptime = ver_list[0].get("UPTIME", "")
-        with self.data_lock:
-            self.hostnames.add(hostname)
-            for entry in cdp_list:
-                text = entry.get("DESTINATION_HOST", "")
-                head = text.split(".", 1)[0].upper() if text else ""
-                entry["DESTINATION_HOST"] = head
-                entry["LOCAL_HOST"] = hostname
-                entry["LOCAL_IP"] = host
-                entry["LOCAL_SERIAL"] = serial_numbers
-                entry["LOCAL_UPTIME"] = uptime
-                self.cdp_neighbour_details.append(entry)
-                caps = entry.get("CAPABILITIES", "")
-                mgmt_ip = entry.get("MANAGEMENT_IP", "")
-                if "Switch" in caps and "Host" not in caps and mgmt_ip:
-                    with self.visited_lock:
-                        if mgmt_ip not in self.visited:
-                            self.host_queue.put(mgmt_ip)
+                        logger.debug("Error closing jump client after disconnect (fallback)", exc_info=True)
+            except NetmikoAuthenticationException:
+                logger.info("Authentication failed for both primary and fallback on %s", host)
+                with self.data_lock:
+                    self.authentication_errors.add(host)
+                raise
 
     def discover_worker(self, jump_host, primary_user, primary_pass, answer_user, answer_pass):
         while True:
@@ -403,6 +439,7 @@ class NetworkDiscoverer:
                 host = self.host_queue.get_nowait()
             except queue.Empty:
                 return
+            # If another thread already marked as visited while queued, skip
             with self.visited_lock:
                 if host in self.visited:
                     self.host_queue.task_done()
@@ -410,7 +447,7 @@ class NetworkDiscoverer:
             last_err = None
             for attempt in range(1, 4):
                 try:
-                    print(f"[{host}] Attempt {attempt}: collecting CDP + version")
+                    logger.info("[%s] Attempt %d: collecting CDP + version", host, attempt)
                     cdp_out, ver_out = self.run_device_commands(
                         jump_host, host, primary_user, primary_pass, answer_user, answer_pass
                     )
@@ -418,16 +455,14 @@ class NetworkDiscoverer:
                     last_err = None
                     break
                 except NetmikoAuthenticationException:
-                    print(f"[{host}] Authentication failed")
-                    with self.data_lock:
-                        self.authentication_errors.add(host)
+                    logger.info("[%s] Authentication failed", host)
                     last_err = "AuthenticationError"
                     break
                 except (NetmikoTimeoutException, SSHException, socket.timeout) as e:
-                    print(f"[{host}] Connection issue: {e}")
+                    logger.warning("[%s] Connection issue: %s", host, e)
                     last_err = type(e).__name__
                 except Exception as e:
-                    print(f"[{host}] Unexpected error: {e}")
+                    logger.exception("[%s] Unexpected error", host)
                     last_err = type(e).__name__
             # After all attempts, mark IP as visited to prevent further retries
             with self.visited_lock:
@@ -439,26 +474,31 @@ class NetworkDiscoverer:
 
     def resolve_dns_for_host(self, hname: str):
         try:
-            print(f"[DNS] Resolving {hname}")
+            logger.debug("[DNS] Resolving %s", hname)
             ip = socket.gethostbyname(hname)
             return hname, ip
         except socket.gaierror:
             return hname, "DNS Resolution Failed"
         except Exception as e:
+            logger.exception("Unexpected DNS error for %s", hname)
             return hname, f"Error: {e}"
 
     def resolve_dns_parallel(self):
-            names = list(self.hostnames)
-            results = []
-            if not names:
-                return
-            with ThreadPoolExecutor(max_workers=min(32, max(4, self.config.limit))) as ex:
-                futs = [ex.submit(self.resolve_dns_for_host, n) for n in names]
-                for f in as_completed(futs):
+        names = list(self.hostnames)
+        results = []
+        if not names:
+            return
+        with ThreadPoolExecutor(max_workers=min(32, max(4, self.config.limit))) as ex:
+            futs = [ex.submit(self.resolve_dns_for_host, n) for n in names]
+            for f in as_completed(futs):
+                try:
                     results.append(f.result())
-            with self.data_lock:
-                for h, ip in results:
-                    self.dns_ip[h] = ip
+                except Exception:
+                    logger.exception("DNS worker failed while resolving names")
+        with self.data_lock:
+            for h, ip in results:
+                self.dns_ip[h] = ip
+
 
 def main():
     config = ConfigLoader()
@@ -469,9 +509,28 @@ def main():
     # Interactive input
     site_name, seeds, primary_user, primary_pass, answer_user, answer_pass = creds.prompt_for_inputs()
 
-    # Queue seeds
+    # Validate seeds: accept IPs or resolvable hostnames
+    validated_seeds = []
     for s in seeds:
-        discoverer.host_queue.put(s)
+        try:
+            # If it's a valid IP, this will succeed
+            ipaddress.ip_address(s)
+            validated_seeds.append(s)
+        except ValueError:
+            # try DNS resolution
+            try:
+                resolved = socket.gethostbyname(s)
+                validated_seeds.append(resolved)
+            except Exception:
+                logger.error("Seed '%s' is not a valid IP and could not be resolved. Aborting.", s)
+                raise SystemExit(1)
+
+    # Queue seeds (mark visited to avoid duplicates)
+    for s in validated_seeds:
+        with discoverer.visited_lock:
+            if s not in discoverer.visited:
+                discoverer.visited.add(s)
+                discoverer.host_queue.put(s)
 
     # Discovery (threaded)
     with ThreadPoolExecutor(max_workers=config.limit) as executor:
@@ -496,7 +555,7 @@ def main():
     # Excel output
     reporter.save_to_excel(
         discoverer.cdp_neighbour_details,
-        seeds,
+        validated_seeds,
         site_name,
         discoverer.dns_ip,
         discoverer.authentication_errors,
@@ -504,14 +563,15 @@ def main():
     )
 
     # Summary
-    print("\nDone!")
-    print(f" Discovered devices: {len(discoverer.visited)}")
-    print(f" CDP entries: {len(discoverer.cdp_neighbour_details)}")
-    print(f" Auth errors: {len(discoverer.authentication_errors)}")
-    print(f" Conn errors: {len(discoverer.connection_errors)}")
+    logger.info("Done!")
+    logger.info(" Discovered devices: %d", len(discoverer.visited))
+    logger.info(" CDP entries: %d", len(discoverer.cdp_neighbour_details))
+    logger.info(" Auth errors: %d", len(discoverer.authentication_errors))
+    logger.info(" Conn errors: %d", len(discoverer.connection_errors))
+
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nInterrupted by user. Exiting gracefully…")
+        logger.info("Interrupted by user. Exiting gracefully…")
