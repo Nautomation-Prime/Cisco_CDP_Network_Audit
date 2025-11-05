@@ -66,18 +66,23 @@ class CredentialManager:
                 logger.warning("Not a Windows platform; cannot store credentials in Credential Manager.")
                 return False
             import win32cred  # type: ignore
-            blob = password.encode("utf-16le")
+            # Try with bytes first (common approach). If pywin32 expects a str, catch and retry.
+            blob_bytes = password.encode("utf-16le")
             credential = {
                 "Type": win32cred.CRED_TYPE_GENERIC,
                 "TargetName": target,
                 "UserName": username,
-                "CredentialBlob": blob,
+                "CredentialBlob": blob_bytes,
                 "Comment": "Created by CDP Network Audit tool",
                 "Persist": persist,
-                "AttributeCount": 0,
-                "Attributes": None,
             }
-            win32cred.CredWrite(credential, 0)
+            try:
+                win32cred.CredWrite(credential, 0)
+            except TypeError as te:
+                logger.debug("CredWrite rejected bytes for CredentialBlob (%s). Retrying with unicode string.", te)
+                # Retry using a plain string for CredentialBlob (some pywin32 builds expect unicode)
+                credential["CredentialBlob"] = password
+                win32cred.CredWrite(credential, 0)
             logger.info("Stored/updated credentials in Windows Credential Manager: %s", target)
             return True
         except Exception:
@@ -280,17 +285,20 @@ class NetworkDiscoverer:
             mgmt_ip = entry.get("MANAGEMENT_IP", "")
 
             if "Switch" in caps and "Host" not in caps and mgmt_ip:
-                should_enqueue = False
-                with self.visited_lock:
-                    if mgmt_ip not in self.visited:
-                        self.visited.add(mgmt_ip)
-                        should_enqueue = True
+                # Deduplicate by hostname first
                 with self.data_lock:
                     if head in self.visited_hostnames:
-                        should_enqueue = False
-                    else:
-                        if head:
-                            self.visited_hostnames.add(head)
+                        continue
+                    if head:
+                        self.visited_hostnames.add(head)
+
+                # Use enqueued set to track items already put into the queue.
+                should_enqueue = False
+                with self.visited_lock:
+                    if mgmt_ip not in self.visited and mgmt_ip not in self.enqueued:
+                        self.enqueued.add(mgmt_ip)
+                        should_enqueue = True
+
                 if should_enqueue:
                     logger.debug("Enqueuing neighbor %s (%s) discovered from %s", head, mgmt_ip, host)
                     self.host_queue.put(mgmt_ip)
