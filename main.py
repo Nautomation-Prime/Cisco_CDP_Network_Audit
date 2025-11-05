@@ -216,6 +216,8 @@ class NetworkDiscoverer:
         self.cdp_neighbour_details: List[Dict] = []
         self.hostnames: set = set()
         self.visited: set = set()
+        # tracks items put into the queue to avoid duplicate enqueues
+        self.enqueued: set = set()
         self.visited_hostnames: set = set()
         self.authentication_errors: set = set()
         self.connection_errors: Dict[str, str] = {}
@@ -433,7 +435,9 @@ class NetworkDiscoverer:
                 host = self.host_queue.get_nowait()
             except queue.Empty:
                 return
+            # Host has been dequeued — remove from enqueued set so it reflects queue state.
             with self.visited_lock:
+                self.enqueued.discard(host)
                 if host in self.visited:
                     self.host_queue.task_done()
                     continue
@@ -537,8 +541,12 @@ def main():
                 logger.error("Seed '%s' is not a valid IP and could not be resolved. Aborting.", s)
                 raise SystemExit(1)
 
-    # Queue seeds (do not mark visited here — workers will mark processed hosts)
+    # Queue seeds (deduplicate via enqueued set so workers actually process them)
     for s in set(validated_seeds):
+        with discoverer.visited_lock:
+            if s in discoverer.visited or s in discoverer.enqueued:
+                continue
+            discoverer.enqueued.add(s)
         discoverer.host_queue.put(s)
 
     # Discovery (threaded)
