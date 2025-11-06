@@ -1,19 +1,29 @@
-# CDP Network Audit - AsyncSSH Version
+CDP Network Audit Tool
+Automated discovery and documentation of Cisco network devices using CDP (Cisco Discovery Protocol).
+Connects to seed devices (optionally via a jump server), collects neighbor and version info, and generates a comprehensive Excel report.
+Features
 
-This script takes in an IP Addresses, preferably the core switches, runs the "Show CDP Neighbors Detail" command and saves the information to a list of dictionaries.
-Each dictionary is then parsed for the neighbouring IP Address for each CDP neighbour and saved to a separate list. Another list is used to store the IP Addresses of those that have been processed so no switch is connected too more than once.
-Each IP Address in the list is connected to, multiple at a time, equal to the amount of cores in your machine, to retrieve the same information. This recursion goes on until there are no more IP Addresses to connect to.
-The information is then converted to a numpy array and saved to an Excel spreadsheet.
-AsyncSSH and AsyncIO are used for concurrency and multiprocessing.
+Multi-threaded network discovery using CDP, with optional jump server SSH proxying.
+Interactive credential management, including Windows Credential Manager integration.
+Robust error handling for authentication and connection issues.
+Automated DNS resolution for discovered hostnames.
+Structured Excel report output, including:
 
-The following information is retrieved from the CDP output and recorded in an Excel sheet for each switch that is logged into:
+CDP neighbor details
+Device inventory
+DNS resolution results
+Authentication and connection errors
 
-Local Interface
-Local Serial
-Local IP
-Destination Host
-Rmote Port
-Remote IP
-Platform
-Software Version
-Capabilities
+
+
+Usage
+
+Run the script and follow prompts for site name, seed device(s), credentials, and (optionally) a jump server.
+Environment variables can override defaults for thread/concurrency limits, timeouts, and credential targets.
+Requires supporting TextFSM templates and an Excel template in the expected locations.
+
+Requirements
+
+Python 3.7+
+pandas, openpyxl, textfsm, paramiko, netmiko
+(Optional, Windows only) pywin32 for Credential Manager integration
