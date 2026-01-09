@@ -668,9 +668,16 @@ class NetworkDiscoverer:
         """
         while True:
             try:
-                host = self.host_queue.get_nowait()
+                # Block briefly so workers don't exit when the queue is momentarily empty
+                host = self.host_queue.get(timeout=1.0)
             except queue.Empty:
-                return
+                # If the queue is empty *and* there are no enqueued items, we can stop.
+                with self.visited_lock:
+                    nothing_pending = (len(self.enqueued) == 0)
+                if nothing_pending:
+                    return
+                # Otherwise, loop again and wait for more work
+                continue
 
             # Host has been dequeued — remove from 'enqueued' so it's eligible again on explicit re-queue.
             with self.visited_lock:
