@@ -685,13 +685,10 @@ class NetworkDiscoverer:
                 raise
 
     # -------------------------- Worker & DNS --------------------------
-
-
     def discover_worker(self, jump_host, primary_user, primary_pass, answer_user, answer_pass) -> None:
         """
         Worker thread for parallel device discovery.
-        
-        Processes devices from queue, attempts connection, parses outputs, 
+        Processes devices from queue, attempts connection, parses outputs,
         and enqueues discovered neighbors. Handles all exceptions gracefully
         to prevent queue hang.
         """
@@ -711,7 +708,6 @@ class NetworkDiscoverer:
                 try:
                     # Sentinel value: None means worker should exit
                     if item is None:
-                        self.host_queue.task_done()
                         logger.info("Worker exit (sentinel): %s", tname)
                         return
 
@@ -723,7 +719,6 @@ class NetworkDiscoverer:
 
                     # Skip if already visited
                     if host in self.visited:
-                        self.host_queue.task_done()
                         continue
 
                     # Attempt to discover device (up to 3 retries)
@@ -737,10 +732,14 @@ class NetworkDiscoverer:
                             self.parse_outputs_and_enqueue_neighbors(host, cdp_out, ver_out)
                             last_err = None
                             break
+
                         except NetmikoAuthenticationException:
                             logger.info("[%s] Authentication failed", host)
-                            last_err = "AuthenticationError"
-                            break  # Don't retry after auth failure
+                            with self.data_lock:
+                                self.authentication_errors.add(host)
+                            last_err = None
+                            break 
+
                         except (NetmikoTimeoutException, SSHException, socket.timeout) as e:
                             logger.warning("[%s] Connection issue (attempt %d): %s", host, attempt, e)
                             last_err = type(e).__name__
