@@ -578,7 +578,6 @@ class NetworkDiscoverer:
             transport = jump.get_transport()
             dest_addr = (target_ip, 22)
             local_addr = ("127.0.0.1", 0)
-            # Enforce timeout on direct-tcpip channel open to prevent hanging on unresponsive targets
             channel = transport.open_channel("direct-tcpip", dest_addr, local_addr, timeout=self.timeout)
 
             conn = ConnectHandler(
@@ -593,6 +592,7 @@ class NetworkDiscoverer:
                 banner_timeout=self.timeout,
                 auth_timeout=self.timeout,
             )
+
             # Remember the jump client to close it later
             conn._jump_client = jump  # type: ignore[attr-defined]
             return conn
@@ -633,6 +633,8 @@ class NetworkDiscoverer:
                 answer_user=answer_user,
                 answer_pass=answer_pass,
             )
+            logger.info(f"{host} Netmiko connected (primary creds)%s",
+                        " via jump" if jump_host else "")
             try:
                 out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout)
                 out_ver = conn.send_command("show version", expect_string=r"#", read_timeout=self.timeout)
@@ -663,6 +665,8 @@ class NetworkDiscoverer:
                     answer_user=answer_user,
                     answer_pass=answer_pass,
                 )
+                logger.info(f"{host} Netmiko connected (fallback 'answer' creds)%s",
+                            " via jump" if jump_host else "")
                 try:
                     out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout)
                     out_ver = conn.send_command("show version", expect_string=r"#", read_timeout=self.timeout)
@@ -730,6 +734,7 @@ class NetworkDiscoverer:
                                 jump_host, host, primary_user, primary_pass, answer_user, answer_pass
                             )
                             self.parse_outputs_and_enqueue_neighbors(host, cdp_out, ver_out)
+                            logger.info(f"{host} Discovery successful")
                             last_err = None
                             break
 
