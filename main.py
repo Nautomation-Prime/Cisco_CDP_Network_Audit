@@ -1,42 +1,126 @@
 #!/usr/bin/env python3
 # -*- coding: cp1252 -*-
-
 """
-CDP Network Audit Tool
+CDP Network Audit Tool — Production Docstring
+=============================================
 
-This script performs automated discovery and documentation of Cisco network devices using
-Cisco Discovery Protocol (CDP). Starting from one or more seed devices, it connects
-(optionally via a jump server), collects 'show cdp neighbors detail' and 'show version'
-outputs, parses them via TextFSM, and writes a structured Excel report.
+Overview
+--------
+A threaded network discovery utility that starts from one or more **seed** Cisco devices and
+crawls the topology via **Cisco Discovery Protocol (CDP)**. The tool connects (optionally through
+an SSH **jump/bastion** host), collects **`show cdp neighbors detail`** and **`show version`**, parses
+outputs with **TextFSM**, enriches with **DNS resolution**, and writes a structured **Excel report**
+from a pre‑formatted template.
 
-Key features:
-- Threaded discovery with a worker pool (configurable via env).
-- Two-tier authentication (primary user, then fallback 'answer' user).
-- Optional SSH jump/proxy host using Paramiko + Netmiko 'sock' channel.
-- DNS resolution for discovered hostnames.
-- Structured Excel output based on a supplied template.
-- Hybrid logging: loads a logging.conf if present; otherwise uses sane defaults.
+This module is designed for reliability, safe concurrency, and repeatable reporting in
+enterprise environments.
 
-Environment variables (optional):
-- CDP_LIMIT       : Max concurrent workers (default: 10)
-- CDP_TIMEOUT     : Per-step timeout (seconds) for SSH/auth/reads (default: 10)
-- CDP_JUMP_SERVER : Jump host (hostname/IP). If empty, connect directly to devices.
-- CDP_PRIMARY_CRED_TARGET : Windows Credential Manager target for primary creds (default: "MyApp/ADM")
-- CDP_ANSWER_CRED_TARGET  : Windows Credential Manager target for 'answer' password (default: "MyApp/Answer")
-- LOGGING_CONFIG  : Path to an INI-style logging config. Overrides default search.
+Inputs & Environment
+--------------------
+* **Interactive prompts** gather: site name, seed device(s), credentials, optional jump host.
+* **Environment variables** (all optional):
+  - `CDP_LIMIT` — max concurrent workers (default: `10`).
+  - `CDP_TIMEOUT` — per‑step timeout (seconds) for SSH/auth/reads (default: `10`).
+  - `CDP_JUMP_SERVER` — jump/bastion hostname or IP. Empty ⇒ direct device connections.
+  - `CDP_PRIMARY_CRED_TARGET` — Windows Credential Manager target for primary creds (default: `MyApp/ADM`).
+  - `CDP_ANSWER_CRED_TARGET` — Windows Credential Manager target for fallback **answer** password (default: `MyApp/Answer`).
+  - `LOGGING_CONFIG` — path to an INI‑style logging config; overrides default search.
 
-Expected files (relative to repo root unless you pass absolute paths in code):
-- ProgramFiles/textfsm/cisco_ios_show_cdp_neighbors_detail.textfsm
-- ProgramFiles/textfsm/cisco_ios_show_version.textfsm
-- ProgramFiles/config_files/1 - CDP Network Audit _ Template.xlsx
-- (Optional) ProgramFiles/Config_Files/logging.conf   # Note the capital 'C' and 'F'
+Required Support Files
+----------------------
+The script validates the presence of required assets at startup and exits with code **1** if missing.
+* TextFSM templates (case‑sensitive on non‑Windows):
+  - `ProgramFiles/textfsm/cisco_ios_show_cdp_neighbors_detail.textfsm`
+  - `ProgramFiles/textfsm/cisco_ios_show_version.textfsm`
+* Excel template (report layout):
+  - `ProgramFiles/config_files/1 - CDP Network Audit _ Template.xlsx`
+* Optional logging configuration (INI):
+  - `ProgramFiles/Config_Files/logging.conf`  *(note capital `C` and `F`)*
 
-Exit codes:
-- 0  : Success
-- 1  : Required template or Excel file missing
-- 130: Interrupted by user (Ctrl+C)
+Authentication Model
+--------------------
+* **Primary credentials** — used for the jump hop and the device hop. On Windows, the tool attempts
+  to read from Credential Manager (target `MyApp/ADM` by default); otherwise it prompts. Users may
+  choose to store updated values back to Credential Manager.
+* **Fallback `answer` credential** — used only for the device hop if primary authentication fails.
+  Username is fixed to `answer`; password is read from Credential Manager (`MyApp/Answer`) or
+  prompted, with optional storage.
 
-Author: Christopher Davies
+Jump/Bastion Support
+--------------------
+* If `CDP_JUMP_SERVER` is set (or provided at the prompt), connections are proxied via a Paramiko
+  `direct-tcpip` channel to the target device and consumed by Netmiko using the `sock` parameter.
+* If unset/blank, the tool connects **directly** to the devices.
+* Host key policy defaults to a warning; production environments should prefer strict known‑hosts
+  management.
+
+Discovery & Parsing Workflow
+----------------------------
+1. Normalize and validate **seed** devices (accept IPv4 or resolvable hostnames; stored as IPv4).
+2. Use a **ThreadPoolExecutor** (`CDP_LIMIT` workers) to run discovery workers pulling targets from a queue.
+3. Each worker:
+   - Attempts `show cdp neighbors detail` and `show version` (primary creds; retries with `answer` on auth failure).
+   - Parses outputs with **TextFSM** (headers mapped to dict keys).
+   - Enriches CDP entries with local context (hostname, serial, uptime).
+   - Applies queueing heuristics: enqueue neighbors that are **Switch**‑capable, **not** hosts, and have a **management IP**.
+   - Deduplicates by hostname and management IP to avoid churn.
+4. After crawling finishes, resolve **DNS** for discovered hostnames in a small parallel pool.
+
+DNS Enrichment
+--------------
+* Best‑effort `socket.gethostbyname()` lookups executed in parallel after discovery.
+* Results are captured as a simple mapping: `Hostname` → `IP Address` (or `UNRESOLVED`/`ERROR`).
+
+Excel Output
+------------
+An output workbook named **`<site_name>_CDP_Network_Audit.xlsx`** is created by copying the template.
+
+Sheets and content:
+* **Audit** — main CDP dataset (appended at the template’s expected start row). The following metadata cells
+  are stamped prior to appending data:
+  - `B4`: Site name, `B5`: Date, `B6`: Time, `B7`: Primary seed, `B8`: Secondary seed (or a default string).
+  Data columns include: `LOCAL_HOST`, `LOCAL_IP`, `LOCAL_PORT`, `LOCAL_SERIAL`, `LOCAL_UPTIME`,
+  `DESTINATION_HOST`, `REMOTE_PORT`, `MANAGEMENT_IP`, `PLATFORM`.
+* **DNS Resolved** — two columns: `Hostname`, `IP Address`.
+* **Authentication Errors** — single column: `Authentication Errors` (device IPs).
+* **Connection Errors** — two columns: `IP Address`, `Error` (e.g., `NetmikoTimeoutException`, `SSHException`).
+
+Logging
+-------
+* **Hybrid bootstrap**: if a `LOGGING_CONFIG` file exists, configure via `logging.config.fileConfig()` with
+  `disable_existing_loggers=False`. Otherwise, fall back to a console logger at **INFO** with timestamps.
+
+Concurrency, Timeouts & Retries
+-------------------------------
+* Worker count is controlled by `CDP_LIMIT` (default 10).
+* Per‑step timeouts are controlled by `CDP_TIMEOUT` (default 10 seconds) and applied to SSH/auth/read operations.
+* Each device is retried up to **3** times on connectivity exceptions before being recorded under Connection Errors.
+* Authentication failures are recorded under **Authentication Errors** and are not retried with the same creds.
+* Workers always `task_done()` to prevent queue hangs; `None` sentinels signal clean thread exit.
+
+Exit Codes
+----------
+* **0** — Success
+* **1** — Required TextFSM or Excel template missing/invalid
+* **130** — Interrupted by user (Ctrl+C)
+
+Security Considerations
+-----------------------
+* Prefer secret stores (Credential Manager, vaults) over plaintext. Do not commit secrets.
+* Harden and monitor jump hosts. Consider strict host key verification.
+* The Excel output contains sensitive topology information; distribute on a need‑to‑know basis.
+
+Extensibility Hooks
+-------------------
+* **CredentialManager** — adapt for non‑Windows stores or organizational policies.
+* **NetworkDiscoverer** — adjust neighbor queueing heuristics in `parse_outputs_and_enqueue_neighbors()`.
+* **ExcelReporter** — change sheet names, ranges, or column layouts.
+* **Logging** — provide an organization‑standard INI and point `LOGGING_CONFIG` to it.
+
+Example (Typical Session)
+-------------------------
+The interactive prompts guide you through site name, seeds, credentials, and (optionally) a jump server.
+On completion the tool summarizes discovered devices, CDP entries, and error counts.
 """
 import os
 import sys
