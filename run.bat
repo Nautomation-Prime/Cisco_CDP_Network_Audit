@@ -29,5 +29,9 @@ echo.
 
 "%PYTHON%" "%MAIN%" %*
 
+echo.
+echo Script completed.
+pause
+
 endlocal
 exit /b %ERRORLEVEL%

@@ -526,24 +526,22 @@ class NetworkDiscoverer:
             logger.exception("Unexpected error while parsing template %s", template_path)
             return []
 
-    def parse_outputs_and_enqueue_neighbors(self, host: str, cdp_output: str, version_output: str) -> None:
+    def parse_outputs_and_enqueue_neighbors(self, host: str, cdp_output, version_output: str) -> None:
         """
-        Extract local device attributes and CDP neighbor entries, enrich rows, and enqueue
-        candidate neighbor management IPs for further crawling.
+        Accepts:
+        - list[dict] from entry* fallback (already parsed rows), OR
+        - raw 'show cdp neighbors detail' text (string)
+        Enriches rows, appends to dataset, and enqueues by management IP.
         """
-        cdp_list = self._safe_parse_textfsm(self.cdp_template, cdp_output)
+        # --- Parse local 'show version' (unchanged) ---
         ver_list = self._safe_parse_textfsm(self.ver_template, version_output)
-
         if ver_list:
             hostname = ver_list[0].get("HOSTNAME", host)
             serial_numbers = ver_list[0].get("SERIAL", "")
             uptime = ver_list[0].get("UPTIME", "")
         else:
-            hostname = host
-            serial_numbers = ""
-            uptime = ""
+            hostname, serial_numbers, uptime = host, "", ""
 
-        # Track local hostname and mark IP visited
         with self.data_lock:
             if hostname:
                 self.hostnames.add(hostname)
@@ -551,36 +549,40 @@ class NetworkDiscoverer:
         with self.visited_lock:
             self.visited.add(host)
 
-        # Enrich CDP entries and collect neighbors
-        for entry in cdp_list:
-            text = entry.get("DESTINATION_HOST", "")
-            head = text.split(".", 1)[0].upper() if text else ""
+        # --- If Tier-B already produced rows, use them directly ---
+        rows = []
+        if isinstance(cdp_output, list):
+            rows = cdp_output
+        else:
+            # Tier-A raw detail: use TextFSM as before (your template)
+            rows = self._safe_parse_textfsm(self.cdp_template, cdp_output)
+
+        for entry in rows:
+            # normalize destination host
+            raw_name = entry.get("DESTINATION_HOST") or entry.get("DEVICE_ID") or ""
+            head = raw_name.split(".", 1)[0].upper() if raw_name else ""
             entry["DESTINATION_HOST"] = head
-            entry["LOCAL_HOST"] = hostname
-            entry["LOCAL_IP"] = host
+
+            # annotate local
+            entry["LOCAL_HOST"]   = hostname
+            entry["LOCAL_IP"]     = host
             entry["LOCAL_SERIAL"] = serial_numbers
             entry["LOCAL_UPTIME"] = uptime
 
+            # mgmt IP normalize
+            mgmt_ip = (entry.get("MANAGEMENT_IP") or entry.get("NEIGHBOR_IP") or entry.get("IP") or "").strip()
+            entry["MANAGEMENT_IP"] = mgmt_ip
+            caps = entry.get("CAPABILITIES", "")
+            
+            # append to dataset
             with self.data_lock:
                 self.cdp_neighbour_details.append(entry)
 
-            caps = entry.get("CAPABILITIES", "")
-            mgmt_ip = entry.get("MANAGEMENT_IP", "")
-
-            # Heuristic: enqueue only devices that look like switches (not "Host"),
-            # and only if we have a management IP.
-            if "Switch" in caps and "Host" not in caps and mgmt_ip:
-                # Deduplicate by hostname first to reduce queue churn
-                with self.data_lock:
-                    if head in self.visited_hostnames:
-                        continue
-                    if head:
-                        self.visited_hostnames.add(head)
-
-                # Avoid double enqueueing the same IP while it's pending
+            # enqueue strictly by IP (keeps recursion)
+            if mgmt_ip:
                 should_enqueue = False
                 with self.visited_lock:
-                    if mgmt_ip not in self.visited and mgmt_ip not in self.enqueued:
+                    if mgmt_ip not in self.visited and mgmt_ip not in self.enqueued and "Host" not in caps and "Switch" in caps:
                         self.enqueued.add(mgmt_ip)
                         should_enqueue = True
                 if should_enqueue:
@@ -694,6 +696,57 @@ class NetworkDiscoverer:
                     logger.debug("Failed to close jump client after error.", exc_info=True)
             raise
 
+    def _parse_cdp_entry_star_blocks(self, proto_text: str, vers_text: str):
+        """
+        Parse outputs from:
+        show cdp entry * protocol
+        show cdp entry * version
+        Returns: list of normalized dicts suitable for self.cdp_neighbour_details.
+        """
+        import re
+        # Split text into {DeviceID: block} maps
+        def split_blocks(raw: str) -> dict:
+            blocks = {}
+            parts = re.split(r"\n(?=Device ID:\s*)", raw or "", flags=re.IGNORECASE)
+            for part in parts:
+                if not part.strip():
+                    continue
+                m = re.search(r"Device ID:\s*(.+)", part, flags=re.IGNORECASE)
+                if m:
+                    dev = m.group(1).strip()
+                    blocks[dev] = part
+            return blocks
+
+        proto_blocks = split_blocks(proto_text)
+        vers_blocks  = split_blocks(vers_text)
+        all_ids = set(proto_blocks) | set(vers_blocks)
+
+        rows = []
+        for dev_id in sorted(all_ids):
+            pblk = proto_blocks.get(dev_id, "")
+            vblk = vers_blocks.get(dev_id, "")
+
+            def g(pattern, text, flags=re.IGNORECASE | re.DOTALL):
+                m = re.search(pattern, text or "", flags)
+                return (m.group(1).strip() if m else "")
+
+            mgmt_ip   = g(r"IP address:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", pblk) or \
+                        g(r"IP address:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", vblk)
+            platform  = g(r"Platform:\s*([^,]+)", vblk)
+            caps      = g(r"Capabilities:\s*([^\n]+)", vblk)
+            local_if  = g(r"Interface:\s*([^\s,]+)", pblk)
+            remote_if = g(r"Port ID\s*\(outgoing port\):\s*([^\s,]+)", pblk)
+
+            rows.append({
+                "DESTINATION_HOST": (dev_id.split(".", 1)[0].upper() if dev_id else ""),
+                "MANAGEMENT_IP": mgmt_ip,
+                "PLATFORM": platform,
+                "CAPABILITIES": caps,
+                "LOCAL_PORT": local_if,
+                "REMOTE_PORT": remote_if,
+            })
+        return rows
+
     def run_device_commands(
         self,
         jump_host: str,
@@ -702,81 +755,146 @@ class NetworkDiscoverer:
         primary_pass: str,
         answer_user: str,
         answer_pass: str,
-    ) -> Tuple[str, str]:
+    ):
         """
-        Try to collect required outputs from `host` using primary creds, then fallback user on auth failure.
+        Tiered CDP collection:
+        A) Try 'show cdp neighbors detail' with generous timing
+        B) If suspected truncated → switch to 'show cdp entry * protocol/version' and return list rows
+        C) (optional) final fallback via '| redirect flash:/__cdp.txt'
 
         Returns:
-            (cdp_output, version_output)
-
-        Raises:
-            NetmikoAuthenticationException if both primary and fallback auth fail.
-            Other exceptions for connectivity/timeout are propagated to caller for retry handling.
+        Either:
+            (list_of_rows, show_version_text)  # when using entry* fallback, already parsed rows
+        or:
+            (raw_detail_text, show_version_text)  # when detail path is trusted
         """
-        try:
-            conn = self._netmiko_via_jump(
+        def _prep(conn):
+            # Best-effort prep (non-fatal)
+            try: conn.enable()
+            except Exception: pass
+            try: conn.global_cmd_verify = False  # disable cmd-verify heuristics
+            except Exception: pass
+            for cmd in ("terminal length 0", "terminal width 512", "no logging console"):
+                try:
+                    conn.send_command(cmd, expect_string=r"#", read_timeout=self.timeout)
+                except Exception:
+                    pass
+
+        def _connect(primary: bool):
+            return self._netmiko_via_jump(
                 jump_host=jump_host,
                 target_ip=host,
-                primary=True,
+                primary=primary,
                 primary_user=primary_user,
                 primary_pass=primary_pass,
                 answer_user=answer_user,
                 answer_pass=answer_pass,
             )
-            logger.info(f"{host} Netmiko connected (primary creds)%s",
-                        " via jump" if jump_host else "")
-            try:
-                out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout)
-                out_ver = conn.send_command("show version", expect_string=r"#", read_timeout=self.timeout)
-                return out_cdp, out_ver
-            finally:
-                # Always try to close cleanly
-                try:
-                    conn.disconnect()
-                except Exception:
-                    logger.debug("Error disconnecting Netmiko connection", exc_info=True)
-                try:
-                    if hasattr(conn, "_jump_client") and conn._jump_client:  # type: ignore[attr-defined]
-                        conn._jump_client.close()
-                except Exception:
-                    logger.debug("Error closing jump client after disconnect", exc_info=True)
 
-        except NetmikoAuthenticationException:
-            # Retry once using 'answer' user (device hop only; jump still uses primary)
-            logger.debug("Primary authentication failed for %s; attempting fallback user 'answer'", host)
-            conn = None
+        # --- connect primary, else fallback ---
+        conn = None
+        try:
             try:
-                conn = self._netmiko_via_jump(
-                    jump_host=jump_host,
-                    target_ip=host,
-                    primary=False,
-                    primary_user=primary_user,
-                    primary_pass=primary_pass,
-                    answer_user=answer_user,
-                    answer_pass=answer_pass,
-                )
-                logger.info(f"{host} Netmiko connected (fallback 'answer' creds)%s",
-                            " via jump" if jump_host else "")
-                try:
-                    out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout)
-                    out_ver = conn.send_command("show version", expect_string=r"#", read_timeout=self.timeout)
-                    return out_cdp, out_ver
-                finally:
-                    try:
-                        conn.disconnect()
-                    except Exception:
-                        logger.debug("Error disconnecting Netmiko connection (fallback)", exc_info=True)
-                    try:
-                        if hasattr(conn, "_jump_client") and conn._jump_client:  # type: ignore[attr-defined]
-                            conn._jump_client.close()
-                    except Exception:
-                        logger.debug("Error closing jump client after disconnect (fallback)", exc_info=True)
+                conn = _connect(True)
+                logger.info(f"{host} Netmiko connected (primary creds)%s", " via jump" if jump_host else "")
             except NetmikoAuthenticationException:
-                # Both attempts failed
-                logger.info("Authentication failed for both primary and fallback on %s", host)
-                with self.data_lock:
-                    self.authentication_errors.add(host)
-                raise
+                conn = _connect(False)
+                logger.info(f"{host} Netmiko connected (fallback 'answer' creds)%s", " via jump" if jump_host else "")
+
+            _prep(conn)
+
+            # -------- Tier A: try big detail with generous timing --------
+            detail = conn.send_command(
+                "show cdp neighbors detail",
+                expect_string=r"#",
+                read_timeout=max(self.timeout, 45),
+                # delay_factor=2,
+                strip_prompt=False,
+                strip_command=False,
+            )
+            logger.debug("=== RAW CDP OUTPUT FROM %s ===\n%s\n=== END RAW CDP ===", host, detail)
+            # Quick truncation heuristic: too few neighbors or no 'Device ID:' lines.
+            device_id_count = detail.count("Device ID:")
+            looks_truncated = (device_id_count == 0) or (len(detail) < 1000)
+
+            # Optional: compare with summary count to detect mismatch
+            try:
+                summary = conn.send_command(
+                    "show cdp neighbors",
+                    expect_string=r"#",
+                    read_timeout=max(self.timeout, 20),
+                    delay_factor=2,
+                    strip_prompt=False,
+                    strip_command=False,
+                )
+                # rough count: lines that begin with a word (DeviceID column)
+                summary_count = sum(1 for ln in summary.splitlines() if ln.strip() and not ln.startswith(("Device ID", "Capability", "-----")))
+                if 0 < device_id_count < summary_count:
+                    looks_truncated = True
+            except Exception:
+                pass
+
+            if not looks_truncated:
+                # also collect show version and return the raw text
+                ver = conn.send_command("show version", expect_string=r"#", read_timeout=max(self.timeout, 20))
+                return detail, ver
+
+            logger.debug("[%s] CDP detail seems truncated (Device ID count: %d). Falling back to entry*.", host, device_id_count)
+
+            # -------- Tier B: entry* fallback (small, reliable) --------
+            proto = conn.send_command(
+                "show cdp entry * protocol",
+                expect_string=r"#",
+                read_timeout=max(self.timeout, 45),
+                delay_factor=4,
+                strip_prompt=False,
+                strip_command=False,
+            )
+            vers = conn.send_command(
+                "show cdp entry * version",
+                expect_string=r"#",
+                read_timeout=max(self.timeout, 45),
+                delay_factor=4,
+                strip_prompt=False,
+                strip_command=False,
+            )
+            rows = self._parse_cdp_entry_star_blocks(proto, vers)
+            ver  = conn.send_command("show version", expect_string=r"#", read_timeout=max(self.timeout, 20))
+            if rows:
+                return rows, ver
+
+            # -------- Tier C (optional): redirect to file on device --------
+            # If you want this, uncomment the block below.
+            # try:
+            #     conn.send_command("delete /force flash:/__cdp.txt", expect_string=r"#", read_timeout=10)
+            # except Exception:
+            #     pass
+            # try:
+            #     conn.send_command("show cdp neighbors detail | redirect flash:/__cdp.txt",
+            #                       expect_string=r"#", read_timeout=max(self.timeout, 60), delay_factor=5)
+            #     detail2 = conn.send_command("more flash:/__cdp.txt",
+            #                       expect_string=r"#", read_timeout=max(self.timeout, 60), delay_factor=5)
+            #     conn.send_command("delete /force flash:/__cdp.txt", expect_string=r"#", read_timeout=10)
+            #     ver = conn.send_command("show version", expect_string=r"#", read_timeout=max(self.timeout, 20))
+            #     return detail2, ver
+            # except Exception:
+            #     pass
+
+            # As a final fallback, at least return the (possibly partial) detail + version
+            ver = conn.send_command("show version", expect_string=r"#", read_timeout=max(self.timeout, 20))
+            return detail, ver
+
+        finally:
+            try:
+                if conn:
+                    conn.disconnect()
+            except Exception:
+                logger.debug("Error disconnecting Netmiko connection", exc_info=True)
+            try:
+                if conn and hasattr(conn, "_jump_client") and conn._jump_client:
+                    conn._jump_client.close()
+            except Exception:
+                logger.debug("Error closing jump client after disconnect", exc_info=True)
 
     # -------------------------- Worker & DNS --------------------------
     def discover_worker(self, jump_host, primary_user, primary_pass, answer_user, answer_pass) -> None:
