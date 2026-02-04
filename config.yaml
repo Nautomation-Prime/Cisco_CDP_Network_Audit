@@ -33,8 +33,8 @@ network:
   # - Users can still enable/disable jump host interactively when prompted
   # - Can be overridden via CDP_JUMP_SERVER environment variable
   #
-  # Example: "10.112.250.6" or "bastion.company.com"
-  jump_host: "10.112.250.6"
+  # Example: "192.0.2.10" or "bastion.company.com"
+  jump_host: "192.0.2.10"
 
   # Device Type for Netmiko Connections
   # ------------------------------------
@@ -375,19 +375,19 @@ advanced:
 # EXAMPLES (Windows CMD):
 #   SET CDP_LIMIT=20
 #   SET CDP_TIMEOUT=15
-#   SET CDP_JUMP_SERVER=10.1.1.1
+#   SET CDP_JUMP_SERVER=192.0.2.10
 #   SET CDP_PRIMARY_CRED_TARGET=MyCompany/NetworkAdmin
 #
 # EXAMPLES (Windows PowerShell):
 #   $env:CDP_LIMIT = "20"
 #   $env:CDP_TIMEOUT = "15"
-#   $env:CDP_JUMP_SERVER = "10.1.1.1"
+#   $env:CDP_JUMP_SERVER = "192.0.2.10"
 #   $env:CDP_PRIMARY_CRED_TARGET = "MyCompany/NetworkAdmin"
 #
 # EXAMPLES (Linux/macOS):
 #   export CDP_LIMIT=20
 #   export CDP_TIMEOUT=15
-#   export CDP_JUMP_SERVER=10.1.1.1
+#   export CDP_JUMP_SERVER=192.0.2.10
 #   export CDP_PRIMARY_CRED_TARGET=MyCompany/NetworkAdmin
 #
 # =============================================================================

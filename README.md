@@ -94,7 +94,7 @@ This tool supports a **primary** credential and a fallback **`answer`** credenti
 # Windows PowerShell
 $env:CDP_LIMIT = "20"
 $env:CDP_TIMEOUT = "15"
-$env:CDP_JUMP_SERVER = "bastion.corp.local"
+$env:CDP_JUMP_SERVER = "bastion.company.com"
 $env:CDP_PRIMARY_CRED_TARGET = "MyApp/ADM"
 $env:CDP_ANSWER_CRED_TARGET = "MyApp/Answer"
 $env:LOGGING_CONFIG = "ProgramFiles/Config_Files/logging.conf"
@@ -200,17 +200,17 @@ An output file named **`<site_name>_CDP_Network_Audit.xlsx`** is created by copy
 ## ✅ Example session
 ```text
 === CDP Network Audit ===
-Enter site name (used in Excel filename, max 50 chars): MKD-Campus
-Enter one or more seed device IPs or hostnames (comma-separated, max 500): 10.10.0.11, sw-core-1
+Enter site name (used in Excel filename, max 50 chars): HQ-Campus
+Enter one or more seed device IPs or hostnames (comma-separated, max 500): 192.0.2.11, core-sw-1
 ...
-Press Enter to accept, or type a different username: opsadmin
+Press Enter to accept, or type a different username: netadmin
 Enter switch/jump password (Primary): ********
 Store Primary creds in Credential Manager as 'MyApp/ADM'? [y/N]
 Enter 'answer' password: ********
 Store 'answer' password in Credential Manager as 'MyApp/Answer'? [y/N]
 
 Enter jump server IP/hostname (or leave blank to use device directly)
-Enter IP Address: bastion.corp.local
+Enter IP Address: bastion.company.com
 
 INFO Validated 2 seed device(s) for discovery
 ... (threaded discovery logs) ...
