@@ -1,0 +1,393 @@
+# =============================================================================
+# CDP Network Audit Configuration File
+# =============================================================================
+# 
+# This YAML file centralizes all configurable parameters for the CDP Network
+# Audit tool. End users can modify these settings to customize the tool's
+# behavior without modifying the source code.
+#
+# YAML BASICS:
+# - Lines starting with # are comments
+# - Settings follow the format: key: value
+# - Nested settings use indentation (2 spaces recommended)
+# - Strings can be quoted or unquoted (quotes required for special characters)
+# - Numbers don't need quotes
+# - Boolean values: true/false (lowercase)
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# NETWORK CONNECTION SETTINGS
+# -----------------------------------------------------------------------------
+# These settings control how the tool connects to network devices and manages
+# the discovery process.
+
+network:
+  # Jump/Bastion Server Configuration
+  # ----------------------------------
+  # The jump host is an intermediate SSH server used to reach network devices.
+  # This is common in secure environments where direct access is restricted.
+  #
+  # - Set to an IP address or hostname to use a jump server by default
+  # - Set to empty string "" or null to disable jump host by default
+  # - Users can still enable/disable jump host interactively when prompted
+  # - Can be overridden via CDP_JUMP_SERVER environment variable
+  #
+  # Example: "10.112.250.6" or "bastion.company.com"
+  jump_host: "10.112.250.6"
+
+  # Device Type for Netmiko Connections
+  # ------------------------------------
+  # Specifies the type of network devices being audited. This determines which
+  # Netmiko driver is used for SSH connections.
+  #
+  # Common values:
+  #   - "cisco_ios"    : Cisco IOS/IOS-XE devices (routers, switches)
+  #   - "cisco_nxos"   : Cisco Nexus switches (NX-OS)
+  #   - "cisco_xe"     : Cisco IOS-XE (alternative)
+  #   - "cisco_xr"     : Cisco IOS-XR (service provider routers)
+  #   - "cisco_asa"    : Cisco ASA firewalls
+  #
+  # See Netmiko documentation for the full list of supported device types:
+  # https://github.com/ktbyers/netmiko#supported-device-types
+  device_type: "cisco_ios"
+
+  # SSH Port
+  # --------
+  # The TCP port used for SSH connections to network devices.
+  # Standard SSH port is 22; only change if your devices use non-standard ports.
+  ssh_port: 22
+
+  # Maximum Concurrent Workers
+  # --------------------------
+  # The maximum number of devices that can be queried simultaneously.
+  # Higher values = faster discovery but increased network load and system resources.
+  #
+  # Considerations:
+  #   - Small networks (< 50 devices): 5-10 workers
+  #   - Medium networks (50-200 devices): 10-20 workers
+  #   - Large networks (> 200 devices): 20-30 workers
+  #   - Very large networks: 30-50 workers (monitor system resources)
+  #
+  # Can be overridden via CDP_LIMIT environment variable
+  # Recommended range: 5-50 depending on network size and system capabilities
+  default_limit: 10
+
+  # SSH Operation Timeout
+  # ---------------------
+  # Timeout in seconds for SSH operations (connection, authentication, command reads).
+  # Increase this value for slow networks, high-latency connections, or devices
+  # that take longer to respond to commands.
+  #
+  # Considerations:
+  #   - Fast networks with modern devices: 10-15 seconds
+  #   - Slow networks or older devices: 20-30 seconds
+  #   - Very slow or congested networks: 30-60 seconds
+  #
+  # Can be overridden via CDP_TIMEOUT environment variable
+  # Recommended range: 10-60 seconds
+  default_timeout: 10
+
+  # Maximum Connection Retry Attempts
+  # ----------------------------------
+  # Number of times to retry connecting to a device before marking it as a
+  # connection error. Each device is retried this many times on connectivity
+  # failures (timeouts, SSH exceptions, etc.).
+  #
+  # Considerations:
+  #   - Reliable networks: 2-3 retries
+  #   - Unreliable networks: 3-5 retries
+  #   - Very unreliable networks: 5-10 retries (may slow discovery)
+  #
+  # Note: Authentication failures are NOT retried with the same credentials
+  # Recommended range: 2-5 (higher for unreliable networks)
+  max_retry_attempts: 3
+
+  # DNS Resolution Worker Pool Settings
+  # ------------------------------------
+  # These settings control the thread pool used for DNS resolution after device
+  # discovery completes. DNS lookups run in parallel to speed up the process.
+  #
+  # The actual number of workers is calculated as:
+  #   min(dns_max_workers, max(dns_min_workers, worker_limit))
+  #
+  # This ensures reasonable resource usage while maintaining performance.
+  dns_max_workers: 32  # Maximum DNS resolution threads (upper limit)
+  dns_min_workers: 4   # Minimum DNS resolution threads (lower limit)
+
+# -----------------------------------------------------------------------------
+# CREDENTIAL SETTINGS
+# -----------------------------------------------------------------------------
+# These settings configure how the tool retrieves and manages authentication
+# credentials for connecting to network devices.
+#
+# Windows Credential Manager Integration:
+# - On Windows, the tool can read/write credentials from Windows Credential Manager
+# - This provides secure storage without hardcoding passwords in scripts
+# - Credentials are stored under "target" names (like "MyApp/ADM")
+# - Non-Windows platforms will always prompt for credentials
+#
+# Authentication Model:
+# - Primary credentials: Used for jump host and initial device authentication
+# - Answer credentials: Fallback credentials if primary authentication fails
+#                       (username is fixed to "answer")
+
+credentials:
+  # Primary Credential Target
+  # -------------------------
+  # Windows Credential Manager target name for primary credentials.
+  # These credentials are used for:
+  #   1. SSH authentication to the jump/bastion server (if configured)
+  #   2. Initial authentication to network devices
+  #
+  # Change this to match your organization's credential naming scheme.
+  # Can be overridden via CDP_PRIMARY_CRED_TARGET environment variable
+  #
+  # Examples: "MyCompany/NetworkAdmin", "IT/CiscoDevices", "MyApp/ADM"
+  cred_target: "MyApp/ADM"
+
+  # Answer (Fallback) Credential Target
+  # ------------------------------------
+  # Windows Credential Manager target name for fallback "answer" credentials.
+  # These credentials are used when primary authentication fails on a device.
+  #
+  # The username for answer credentials is always "answer" (fixed).
+  # Only the password is retrieved from Credential Manager or prompted.
+  #
+  # Can be overridden via CDP_ANSWER_CRED_TARGET environment variable
+  #
+  # Examples: "MyCompany/NetworkAnswer", "IT/CiscoAnswer", "MyApp/Answer"
+  alt_creds: "MyApp/Answer"
+
+# -----------------------------------------------------------------------------
+# FILE PATHS
+# -----------------------------------------------------------------------------
+# These paths specify the locations of required TextFSM templates, Excel templates,
+# and logging configuration files.
+#
+# IMPORTANT NOTES:
+# - Paths are relative to the main.py script location
+# - Paths are case-sensitive on Linux/macOS (but not on Windows)
+# - Use forward slashes (/) for cross-platform compatibility
+# - The tool validates these paths at startup and exits if files are missing
+
+file_paths:
+  # Base Directory
+  # --------------
+  # Root directory for the application (relative to main.py).
+  # Usually you don't need to change this unless restructuring the project.
+  base_dir: "."
+
+  # TextFSM Templates
+  # -----------------
+  # TextFSM templates parse structured data from Cisco command outputs.
+  # These templates define the parsing rules for extracting information.
+
+  # CDP Neighbors Detail Template
+  # Parses 'show cdp neighbors detail' output to extract:
+  #   - Neighbor hostname, IP, platform
+  #   - Local/remote interface names
+  #   - Capabilities (Switch, Router, etc.)
+  cdp_template: "ProgramFiles/textfsm/cisco_ios_show_cdp_neighbors_detail.textfsm"
+
+  # Show Version Template
+  # Parses 'show version' output to extract:
+  #   - Device hostname
+  #   - Serial number
+  #   - Software version
+  #   - Uptime
+  ver_template: "ProgramFiles/textfsm/cisco_ios_show_version.textfsm"
+
+  # Excel Template
+  # --------------
+  # Pre-formatted Excel workbook used as the base for audit reports.
+  # The tool copies this template and populates it with discovery data.
+  #
+  # The template must contain the following sheets:
+  #   - Audit: Main CDP discovery data
+  #   - DNS Resolved: Hostname to IP mappings
+  #   - Authentication Errors: Devices with auth failures
+  #   - Connection Errors: Devices with connectivity failures
+  excel_template: "ProgramFiles/config_files/1 - CDP Network Audit _ Template.xlsx"
+
+  # Logging Configuration File
+  # --------------------------
+  # INI-style logging configuration file (optional).
+  # If this file exists, it's used to configure Python logging.
+  # If not found, the tool falls back to basic console logging at INFO level.
+  #
+  # Can be overridden via LOGGING_CONFIG environment variable
+  logging_config_path: "ProgramFiles/config_files/logging.conf"
+
+# -----------------------------------------------------------------------------
+# EXCEL REPORT SETTINGS
+# -----------------------------------------------------------------------------
+# These settings control the structure, format, and content of the Excel output
+# report. Modify these if you've customized the Excel template or need different
+# data layouts.
+
+excel:
+  # Sheet Names
+  # -----------
+  # Names of the sheets in the Excel template and output workbook.
+  # These MUST match the sheet names in your Excel template file exactly.
+  sheets:
+    audit: "Audit"                    # Main CDP discovery data
+    dns: "DNS Resolved"               # Hostname-to-IP resolution results
+    auth_errors: "Authentication Errors"  # Devices with authentication failures
+    conn_errors: "Connection Errors"      # Devices with connectivity failures
+
+  # Metadata Cell Locations (Audit Sheet)
+  # --------------------------------------
+  # Cell addresses (in Excel A1 notation) where metadata is written in the Audit sheet.
+  # These cells are populated before the main data is appended.
+  metadata_cells:
+    site_name: "B4"        # Site name entered by user
+    date: "B5"             # Audit execution date
+    time: "B6"             # Audit execution time
+    primary_seed: "B7"     # Primary seed device IP/hostname
+    secondary_seed: "B8"   # Secondary seed device IP/hostname (or default text)
+
+  # Data Start Rows
+  # ---------------
+  # Row numbers where data begins in each sheet (0-indexed for pandas).
+  # For Excel row 12, use value 11 (Excel row - 1).
+  #
+  # Example: audit_data_start_row: 11 means data starts at Excel row 12
+  data_start_rows:
+    audit: 11              # Audit sheet data starts at Excel row 12
+    other: 4               # Other sheets (DNS, Errors) start at Excel row 5
+
+  # Default Values
+  # --------------
+  defaults:
+    # Text displayed when no secondary seed device is provided
+    secondary_seed_default: "Secondary Seed device not given"
+
+  # Column Definitions
+  # ------------------
+  # These lists define the column names and order for each sheet's data.
+  # The order matters: it determines the left-to-right column sequence in Excel.
+
+  # Audit Sheet Columns
+  # Main CDP discovery data columns
+  columns_audit:
+    - "LOCAL_HOST"         # Hostname of the local/source device
+    - "LOCAL_IP"           # Management IP of the local device
+    - "LOCAL_PORT"         # Local interface connected to neighbor
+    - "LOCAL_SERIAL"       # Serial number of the local device
+    - "LOCAL_UPTIME"       # Uptime of the local device
+    - "DESTINATION_HOST"   # Hostname of the discovered neighbor
+    - "REMOTE_PORT"        # Remote interface on the neighbor device
+    - "MANAGEMENT_IP"      # Management IP of the neighbor device
+    - "PLATFORM"           # Platform/model of the neighbor device
+
+  # DNS Resolved Sheet Columns
+  # DNS lookup results
+  columns_dns:
+    - "Hostname"           # Device hostname
+    - "IP Address"         # Resolved IP address (or UNRESOLVED/ERROR)
+
+  # Authentication Errors Sheet Columns
+  # List of devices where authentication failed
+  columns_auth_errors:
+    - "Authentication Errors"  # Device IP addresses with auth failures
+
+  # Connection Errors Sheet Columns
+  # List of devices with connectivity issues
+  columns_conn_errors:
+    - "IP Address"         # Device IP address
+    - "Error"              # Error type (e.g., NetmikoTimeoutException, SSHException)
+
+# -----------------------------------------------------------------------------
+# DNS RESOLUTION SETTINGS
+# -----------------------------------------------------------------------------
+# These settings control DNS resolution behavior and error handling.
+
+dns:
+  # DNS Error Markers
+  # -----------------
+  # Text strings used in the Excel report when DNS resolution fails.
+  # These appear in the "IP Address" column of the "DNS Resolved" sheet.
+  
+  # UNRESOLVED: DNS lookup failed (name not found, temporary failure, etc.)
+  unresolved_marker: "UNRESOLVED"
+  
+  # ERROR: Unexpected error occurred during DNS resolution
+  error_marker: "ERROR"
+
+# -----------------------------------------------------------------------------
+# ADVANCED SETTINGS
+# -----------------------------------------------------------------------------
+# These settings are for advanced users who need fine-grained control over
+# the tool's behavior. Most users won't need to modify these.
+
+advanced:
+  # Device Queueing Heuristics
+  # --------------------------
+  # Controls which discovered neighbors are added to the discovery queue.
+  # Currently hardcoded in the application, but listed here for reference.
+  #
+  # Devices are queued if they meet ALL of these criteria:
+  #   1. Have "Switch" in their capabilities (from CDP)
+  #   2. Are NOT identified as hosts (e.g., IP phones, endpoints)
+  #   3. Have a valid management IP address
+  #   4. Have not been discovered already (deduplication)
+  #
+  # Future enhancement: Make these rules configurable
+
+  # Host Key Policy
+  # ---------------
+  # SSH host key verification policy. Currently defaults to AutoAddPolicy
+  # (accepts any host key with a warning).
+  #
+  # Security consideration: Production environments should implement strict
+  # known_hosts management for better security.
+  #
+  # Future enhancement: Make policy configurable (Strict, AutoAdd, Reject)
+
+  # Credential Persistence
+  # ----------------------
+  # On Windows, when credentials are not found in Credential Manager,
+  # the tool prompts the user and asks if they want to save them.
+  # Persistence level: 2 = local machine
+  #
+  # Future enhancement: Make persistence level and prompt behavior configurable
+
+# =============================================================================
+# ENVIRONMENT VARIABLE OVERRIDES
+# =============================================================================
+# The following settings can be overridden using environment variables.
+# This is useful for deployment-specific configurations or CI/CD pipelines.
+#
+# Network Settings:
+#   CDP_LIMIT           - Override network.default_limit
+#   CDP_TIMEOUT         - Override network.default_timeout
+#   CDP_JUMP_SERVER     - Override network.jump_host
+#
+# Credential Settings:
+#   CDP_PRIMARY_CRED_TARGET  - Override credentials.cred_target
+#   CDP_ANSWER_CRED_TARGET   - Override credentials.alt_creds
+#
+# File Path Settings:
+#   LOGGING_CONFIG      - Override file_paths.logging_config_path
+#
+# EXAMPLES (Windows CMD):
+#   SET CDP_LIMIT=20
+#   SET CDP_TIMEOUT=15
+#   SET CDP_JUMP_SERVER=10.1.1.1
+#   SET CDP_PRIMARY_CRED_TARGET=MyCompany/NetworkAdmin
+#
+# EXAMPLES (Windows PowerShell):
+#   $env:CDP_LIMIT = "20"
+#   $env:CDP_TIMEOUT = "15"
+#   $env:CDP_JUMP_SERVER = "10.1.1.1"
+#   $env:CDP_PRIMARY_CRED_TARGET = "MyCompany/NetworkAdmin"
+#
+# EXAMPLES (Linux/macOS):
+#   export CDP_LIMIT=20
+#   export CDP_TIMEOUT=15
+#   export CDP_JUMP_SERVER=10.1.1.1
+#   export CDP_PRIMARY_CRED_TARGET=MyCompany/NetworkAdmin
+#
+# =============================================================================

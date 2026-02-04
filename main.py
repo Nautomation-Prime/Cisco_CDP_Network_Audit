@@ -145,7 +145,6 @@ import openpyxl
 import textfsm
 import paramiko
 from netmiko import ConnectHandler
-from ProgramFiles.config_files import config
 try:
     # Newer netmiko
     from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
@@ -153,6 +152,13 @@ except ImportError:
     # Older netmiko naming
     from netmiko.ssh_exception import NetmikoAuthenticationException, NetmikoTimeoutException # type: ignore
 from paramiko.ssh_exception import SSHException
+
+# --------------------------------------------------------------------------------------
+# Load configuration from YAML file
+# --------------------------------------------------------------------------------------
+from ProgramFiles.config_files.config_loader import Config
+
+config = Config()
 
 # --------------------------------------------------------------------------------------
 # Logging bootstrap (HYBRID): try fileConfig() if a logging.conf exists; otherwise fallback
