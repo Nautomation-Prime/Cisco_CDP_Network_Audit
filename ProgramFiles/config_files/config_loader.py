@@ -72,11 +72,31 @@ class Config:
             yaml.YAMLError: If the YAML file is malformed.
         """
         # Determine the absolute path to the config file
-        # If config_file is relative, resolve it relative to this module's directory
         if not Path(config_file).is_absolute():
-            # Config file is in the same directory as this module
-            module_dir = Path(__file__).parent
-            self._config_file = module_dir / config_file
+            # Search order for config.yaml:
+            # 1. Base directory (same level as main.py) - most accessible for users
+            # 2. This module's directory (ProgramFiles/config_files/) - legacy location
+            # 3. Current working directory - fallback
+            
+            module_dir = Path(__file__).parent  # ProgramFiles/config_files/
+            base_dir = module_dir.parent.parent  # Project root (where main.py is)
+            
+            search_paths = [
+                base_dir / config_file,           # Project root (preferred)
+                module_dir / config_file,         # ProgramFiles/config_files/ (legacy)
+                Path.cwd() / config_file,         # Current working directory
+            ]
+            
+            # Use the first path that exists
+            self._config_file = None
+            for path in search_paths:
+                if path.exists():
+                    self._config_file = path
+                    break
+            
+            # If not found in any location, default to base directory for error message
+            if self._config_file is None:
+                self._config_file = base_dir / config_file
         else:
             self._config_file = Path(config_file)
         
@@ -100,7 +120,7 @@ class Config:
         if not self._config_file.exists():
             raise FileNotFoundError(
                 f"Configuration file not found: {self._config_file}\n"
-                f"Please ensure config.yaml exists in the ProgramFiles/config_files/ directory."
+                f"Please ensure config.yaml exists in the project root directory (same folder as main.py)."
             )
         
         with open(self._config_file, "r", encoding="utf-8") as f:
