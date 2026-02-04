@@ -717,7 +717,7 @@ class NetworkDiscoverer:
             logger.info(f"{host} Netmiko connected (primary creds)%s",
                         " via jump" if jump_host else "")
             try:
-                out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout)
+                out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout, delay_factor=5)
                 out_ver = conn.send_command("show version", expect_string=r"#", read_timeout=self.timeout)
                 return out_cdp, out_ver
             finally:
@@ -749,7 +749,7 @@ class NetworkDiscoverer:
                 logger.info(f"{host} Netmiko connected (fallback 'answer' creds)%s",
                             " via jump" if jump_host else "")
                 try:
-                    out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout)
+                    out_cdp = conn.send_command("show cdp neighbors detail", expect_string=r"#", read_timeout=self.timeout, delay_factor=5)
                     out_ver = conn.send_command("show version", expect_string=r"#", read_timeout=self.timeout)
                     return out_cdp, out_ver
                 finally:
