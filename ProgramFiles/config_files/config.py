@@ -129,7 +129,7 @@ EXCEL_TEMPLATE = BASE_DIR / "ProgramFiles" / "config_files" / "1 - CDP Network A
 # Logging configuration file path (searched if LOGGING_CONFIG env var not set)
 # This is an INI-style logging configuration file
 # If not found, the tool falls back to basic console logging
-LOGGING_CONFIG_PATH = BASE_DIR / "ProgramFiles" / "Config_Files" / "logging.conf"
+LOGGING_CONFIG_PATH = BASE_DIR / "ProgramFiles" / "config_files" / "logging.conf"
 
 
 # ===========================

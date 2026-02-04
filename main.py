@@ -770,6 +770,9 @@ class NetworkDiscoverer:
                     conn.send_command(cmd, expect_string=r"#", read_timeout=self.timeout)
                 except Exception:
                     pass
+            # Give the device a moment to settle after terminal config changes
+            import time
+            time.sleep(0.5)
 
         def _connect(primary: bool):
             return self._netmiko_via_jump(
@@ -794,15 +797,26 @@ class NetworkDiscoverer:
 
             _prep(conn)
 
+            # Clear any lingering output that might interfere (some switches buffer console messages)
+            try:
+                conn.clear_buffer()
+            except Exception:
+                pass
+
             # -------- Tier A: try big detail with generous timing --------
-            detail = conn.send_command(
+            # Use send_command_timing to avoid pattern-matching issues that can cause truncation
+            detail = conn.send_command_timing(
                 "show cdp neighbors detail",
-                expect_string=r"#",
-                read_timeout=max(self.timeout, 45),
-                # delay_factor=2,
+                delay_factor=4,
+                read_timeout=max(self.timeout, 60),
                 strip_prompt=False,
                 strip_command=False,
             )
+            # Give extra time for slow switches to finish sending output
+            import time
+            time.sleep(2)
+            # Read any remaining buffered output
+            detail += conn.read_channel()
             logger.debug("=== RAW CDP OUTPUT FROM %s ===\n%s\n=== END RAW CDP ===", host, detail)
             # Quick truncation heuristic: too few neighbors or no 'Device ID:' lines.
             device_id_count = detail.count("Device ID:")
