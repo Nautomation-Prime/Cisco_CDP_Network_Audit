@@ -2,6 +2,9 @@
 # CDP Network Audit Configuration File
 # =============================================================================
 # 
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Christopher Davies
+#
 # This YAML file centralizes all configurable parameters for the CDP Network
 # Audit tool. End users can modify these settings to customize the tool's
 # behavior without modifying the source code.

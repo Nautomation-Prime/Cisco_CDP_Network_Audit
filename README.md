@@ -232,7 +232,8 @@ Done!
 ---
 
 ## 📝 License
-GNU General Public License v3.0
+License: GNU GPL-3.0  
+See the LICENSE file for full text.
 
 ## 👤 Author
 Christopher Davies

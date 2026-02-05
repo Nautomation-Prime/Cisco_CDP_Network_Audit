@@ -7,6 +7,10 @@ REM Version: 2.0
 REM ------------------------------------------------------------------------------
 REM This launcher provides a professional interface for running the CDP audit
 REM with automatic validation, colored output, and helpful diagnostics.
+REM 
+REM # SPDX-License-Identifier: GPL-3.0-only
+REM # Copyright (c) 2026 Christopher Davies
+REM
 REM ------------------------------------------------------------------------------
 
 set "ROOT=%~dp0"
