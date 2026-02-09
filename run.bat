@@ -88,7 +88,7 @@ echo.
 
 REM Activate the virtual environment and run the script
 call "%ROOT%portable_env\Scripts\activate.bat"
-python "%MAIN%" %*
+"%PYTHON%" "%MAIN%" %*
 set EXIT_CODE=%ERRORLEVEL%
 call "%ROOT%portable_env\Scripts\deactivate.bat" 2>nul
 
