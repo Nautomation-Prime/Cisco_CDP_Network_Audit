@@ -88,7 +88,11 @@ echo.
 
 REM Activate the virtual environment and run the module
 call "%ROOT%portable_env\Scripts\activate.bat"
+<<<<<<< HEAD
 python -m cdp_audit %*
+=======
+"%PYTHON%" "%MAIN%" %*
+>>>>>>> c835ce6de4d546a25e2b947a27c02699924fb393
 set EXIT_CODE=%ERRORLEVEL%
 call "%ROOT%portable_env\Scripts\deactivate.bat" 2>nul
 
