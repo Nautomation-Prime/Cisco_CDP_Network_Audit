@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def _prompt_for_jump_host() -> str:
-    """Prompt for optional jump host selection."""
+    """Prompt for optional jump host selection.
+
+    Returns:
+        Jump host string (empty for direct connections).
+    """
     default_jump = (config.JUMP_HOST or "").strip()
 
     use_jump_ans = input(
@@ -48,7 +52,10 @@ def _prompt_for_jump_host() -> str:
 
 
 def main() -> None:
-    """Program entry point."""
+    """Program entry point.
+
+    Orchestrates validation, credential collection, discovery, and reporting.
+    """
     limit = config.DEFAULT_LIMIT
     timeout = config.DEFAULT_TIMEOUT
     cdp_template = config.CDP_TEMPLATE

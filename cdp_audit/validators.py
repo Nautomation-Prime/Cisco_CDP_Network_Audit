@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def validate_required_files(paths: List[Path]) -> None:
-    """Ensure required files exist before execution."""
+    """Ensure required files exist before execution.
+
+    Raises:
+        SystemExit: If any file paths are missing.
+    """
     missing = [str(p) for p in paths if not p.exists()]
     if missing:
         logger.error("Required files missing: %s", ", ".join(missing))
@@ -22,7 +26,11 @@ def validate_required_files(paths: List[Path]) -> None:
 
 
 def validate_excel_template(template_path: Path) -> None:
-    """Validate that the Excel template exists and has required sheet structure."""
+    """Validate that the Excel template exists and has required sheet structure.
+
+    Raises:
+        SystemExit: If the template is missing or invalid.
+    """
     if not template_path.exists():
         logger.error("Excel template not found: %s", template_path)
         raise SystemExit(1)
@@ -63,7 +71,11 @@ def validate_excel_template(template_path: Path) -> None:
 
 
 def normalize_seeds(seeds: List[str]) -> List[str]:
-    """Validate seed IPs/hostnames and normalize to IP addresses."""
+    """Validate seed IPs/hostnames and normalize to IP addresses.
+
+    Raises:
+        SystemExit: If a seed cannot be parsed or resolved.
+    """
     validated_seeds_set = set()
     for seed in seeds:
         try:
