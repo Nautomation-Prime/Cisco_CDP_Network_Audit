@@ -29,7 +29,16 @@ class ExcelReporter:
         auth_errors: set,
         conn_errors: Dict[str, str],
     ) -> None:
-        """Persist collected data to an Excel file cloned from the template."""
+        """Persist collected data to an Excel file cloned from the template.
+
+        Args:
+            details_list: Parsed CDP neighbor rows to place on the Audit sheet.
+            hosts: Seed devices (used to stamp primary/secondary seed cells).
+            site_name: Site label used in the output filename and metadata cells.
+            dns_ip: Hostname to IP mappings for the DNS sheet.
+            auth_errors: IPs that failed authentication (Auth Errors sheet).
+            conn_errors: IPs that failed to connect with error labels.
+        """
         df = pd.DataFrame(details_list, columns=config.EXCEL_AUDIT_COLUMNS)
         dns_array = pd.DataFrame(dns_ip.items(), columns=config.EXCEL_DNS_COLUMNS)
         auth_array = pd.DataFrame(sorted(list(auth_errors)), columns=config.EXCEL_AUTH_ERROR_COLUMNS)

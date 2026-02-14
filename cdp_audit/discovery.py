@@ -65,7 +65,13 @@ class NetworkDiscoverer:
             return []
 
     def parse_outputs_and_enqueue_neighbors(self, host: str, cdp_output, version_output: str) -> None:
-        """Enrich rows, append to dataset, and enqueue neighbors by management IP."""
+        """Enrich parsed rows, append to dataset, and enqueue neighbors by management IP.
+
+        Args:
+            host: The device IP address being processed.
+            cdp_output: Raw CDP output string or a pre-parsed list of dict rows.
+            version_output: Raw ``show version`` output string.
+        """
         ver_list = self._safe_parse_textfsm(self.ver_template, version_output)
         if ver_list:
             hostname = ver_list[0].get("HOSTNAME", host)
@@ -154,6 +160,7 @@ class NetworkDiscoverer:
         answer_user: str,
         answer_pass: str,
     ):
+        """Create a Netmiko connection, optionally tunneled through a jump host."""
         if primary:
             j_user, j_pass = primary_user, primary_pass
             d_user, d_pass = primary_user, primary_pass
@@ -207,7 +214,11 @@ class NetworkDiscoverer:
             raise
 
     def _parse_cdp_entry_star_blocks(self, proto_text: str, vers_text: str):
-        """Parse entry* protocol/version outputs into normalized dict rows."""
+        """Parse entry* protocol/version outputs into normalized dict rows.
+
+        This is used when ``show cdp neighbors detail`` appears truncated and the
+        tool falls back to collecting per-neighbor blocks instead.
+        """
         import re
 
         def split_blocks(raw: str) -> dict:
@@ -264,7 +275,13 @@ class NetworkDiscoverer:
         answer_user: str,
         answer_pass: str,
     ):
-        """Run CDP and version commands using a tiered fallback strategy."""
+        """Run CDP and version commands using a tiered fallback strategy.
+
+        Returns:
+            A tuple of (cdp_output, version_output). The CDP element may be the
+            raw output string or a list of parsed rows when the entry* fallback
+            is used.
+        """
 
         def prep(conn) -> None:
             try:
@@ -392,7 +409,12 @@ class NetworkDiscoverer:
                 logger.debug("Error closing jump client after disconnect", exc_info=True)
 
     def discover_worker(self, jump_host, primary_user, primary_pass, answer_user, answer_pass) -> None:
-        """Worker thread for parallel device discovery."""
+        """Worker thread for parallel device discovery.
+
+        Each worker dequeues targets, attempts authentication with primary creds
+        first, falls back to the ``answer`` account if needed, and records errors
+        for reporting.
+        """
         tname = threading.current_thread().name
         logger.info("Worker start: %s", tname)
         try:
@@ -475,7 +497,7 @@ class NetworkDiscoverer:
             return hname, config.DNS_ERROR_MARKER
 
     def resolve_dns_parallel(self) -> None:
-        """Resolve collected hostnames using a thread pool."""
+        """Resolve collected hostnames using a bounded thread pool."""
         names = list(self.hostnames)
         results: List[Tuple[str, str]] = []
         if not names:

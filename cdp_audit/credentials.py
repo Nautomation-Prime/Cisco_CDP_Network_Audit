@@ -3,7 +3,7 @@
 import logging
 import os
 import sys
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .app_config import config
 
@@ -127,8 +127,12 @@ class CredentialManager:
             raise RuntimeError(f"{display_name} credentials not provided.")
         return user, pwd
 
-    def prompt_for_inputs(self):
-        """Interactively collect site name, seeds, and credentials."""
+    def prompt_for_inputs(self) -> Tuple[str, List[str], str, str, str, str]:
+        """Interactively collect site name, seeds, and credentials.
+
+        Returns:
+            (site_name, seeds, primary_user, primary_pass, answer_user, answer_pass)
+        """
         max_site_name = 50
         max_seeds = 500
 
