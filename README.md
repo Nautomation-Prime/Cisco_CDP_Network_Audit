@@ -21,7 +21,14 @@ concurrency, and repeatable reporting.
 ## 🧱 Repository layout (expected)
 ```
 .
-├── main.py
+├── cdp_audit/
+│   ├── __main__.py
+│   ├── cli.py
+│   ├── credentials.py
+│   ├── discovery.py
+│   ├── excel_reporter.py
+│   ├── logging_setup.py
+│   └── validators.py
 └── ProgramFiles/
     ├── textfsm/
     │   ├── cisco_ios_show_cdp_neighbors_detail.textfsm
@@ -107,8 +114,7 @@ $env:LOGGING_CONFIG = "ProgramFiles/Config_Files/logging.conf"
 2. **Set env vars** as needed (optional).  
 3. Run:
    ```bash
-   python -m main
-   # or: python main.py
+  python -m cdp_audit
    ```
 4. **Follow prompts**:
    - **Site name** (used in the output filename)

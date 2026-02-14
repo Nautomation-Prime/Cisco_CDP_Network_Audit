@@ -11,7 +11,7 @@ REM ----------------------------------------------------------------------------
 
 set "ROOT=%~dp0"
 set "PYTHON=%ROOT%portable_env\Scripts\python.exe"
-set "MAIN=%ROOT%main.py"
+set "PACKAGE_DIR=%ROOT%cdp_audit"
 set "VENV_DIR=%ROOT%portable_env"
 
 REM Enable colors (Windows 10+)
@@ -45,12 +45,12 @@ if not exist "%PYTHON%" (
     goto :error
 )
 
-REM Check if main script exists
-if not exist "%MAIN%" (
-    echo [!] ERROR: Main script not found
-    echo     Expected location: %MAIN%
+REM Check if package exists
+if not exist "%PACKAGE_DIR%\__init__.py" (
+    echo [!] ERROR: Package not found
+    echo     Expected location: %PACKAGE_DIR%\__init__.py
     echo.
-    echo     Please ensure main.py is in the same directory as this script.
+    echo     Please ensure the cdp_audit package exists in the same directory as this script.
     goto :error
 )
 
@@ -82,9 +82,9 @@ echo.
 echo ================================================================================
 echo.
 
-REM Activate the virtual environment and run the script
+REM Activate the virtual environment and run the module
 call "%ROOT%portable_env\Scripts\activate.bat"
-python "%MAIN%" %*
+python -m cdp_audit %*
 set EXIT_CODE=%ERRORLEVEL%
 call "%ROOT%portable_env\Scripts\deactivate.bat" 2>nul
 

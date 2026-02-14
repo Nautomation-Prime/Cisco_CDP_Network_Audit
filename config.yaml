@@ -34,7 +34,7 @@ network:
   # - Can be overridden via CDP_JUMP_SERVER environment variable
   #
   # Example: "192.0.2.10" or "bastion.company.com"
-  jump_host: "192.0.2.10"
+  jump_host: ""
 
   # Device Type for Netmiko Connections
   # ------------------------------------
