@@ -38,6 +38,13 @@ Security Considerations:
 - Use environment variables or secure credential stores (Windows Credential Manager)
   for passwords and secrets
 - The YAML file should be readable only by authorized users in production
+
+Author: Christopher Davies T/A Nautomation Prime
+Email: nautomationprime.f3wfe@simplelogin.com
+
+Copyright (c) 2026 Christopher Davies T/A Nautomation Prime
+Licensed under the GNU General Public License v3.0 (GPL-3.0)
+See the LICENSE file in the project root for full license text.
 """
 
 import os
