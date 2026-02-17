@@ -1,5 +1,51 @@
-                    GNU GENERAL PUBLIC LICENSE
-                       Version 3, 29 June 2007
+MIT LICENSE (For Public GitHub Repositories Only)
+=================================================
+
+Copyright (c) 2026 Christopher Davies, Trading as Nautomation Prime
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+PROPRIETARY CONTENT - ALL RIGHTS RESERVED
+=========================================
+
+The following are proprietary and owned exclusively by Christopher Davies,
+Trading as Nautomation Prime:
+
+1. The "PRIME Framework" (Pinpoint, Re-Engineer, Implement, Measure, Empower)
+2. The "Prime Philosophy" and related methodologies
+3. Nautomation Prime branding, logos, and visual design
+4. Website content and documentation on nautomationprime.io (except code examples)
+5. Consulting methodologies and proprietary business processes
+
+These items are NOT licensed under MIT, GPL, Apache, or any open-source license.
+Unauthorized use, reproduction, modification, or distribution is strictly prohibited.
+
+For licensing inquiries or commercial use of proprietary content, contact:
+Christopher Davies, Nautomation Prime
+Email: nautomationprime.f3wfe@simplelogin.com
+
+---
+
+ORIGINAL GPL-3.0 LICENSE (Deprecated - Kept for Reference Only)
+===============================================================
 
  Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
  Everyone is permitted to copy and distribute verbatim copies
